@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "BindingProblem"
+version = "0.1.0"
+description = "Explores the trade-off between binding features to object versus binding features to (similar) features"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "Pillow",
+    "pandas",
+    "scikit-learn",
+    "torch",
+    "torchvision",
+    "wandb",
+    "numpy",
+    "matplotlib",
+    "jaxtyping",
+    "einops",
+    "line_profiler",
+    "tqdm",
+    "fancy_einsum",
+    "transformers",
+    "timm",
+    "datasets",
+    "line_profiler",
+    "kaleido",
+    "open-clip-torch",
+    "plotly"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]

@@ -1,0 +1,26 @@
+Metadata-Version: 2.4
+Name: BindingProblem
+Version: 0.1.0
+Summary: Explores the trade-off between binding features to object versus binding features to (similar) features
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: Pillow
+Requires-Dist: pandas
+Requires-Dist: scikit-learn
+Requires-Dist: torch
+Requires-Dist: torchvision
+Requires-Dist: wandb
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: jaxtyping
+Requires-Dist: einops
+Requires-Dist: line_profiler
+Requires-Dist: tqdm
+Requires-Dist: fancy_einsum
+Requires-Dist: transformers
+Requires-Dist: timm
+Requires-Dist: datasets
+Requires-Dist: line_profiler
+Requires-Dist: kaleido
+Requires-Dist: open-clip-torch
+Requires-Dist: plotly
