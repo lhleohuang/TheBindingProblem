@@ -527,7 +527,7 @@ if __name__ == "__main__":
     # you may call construct_activation_pairs (for superposition catastrophe style datset) 
     # or construct_activation_pairs_one_fixed_one_changes_one_feature (for that baseline)
     # or construct_activation_pairs_strict_diff (for that baseline)
-    MODE = "superposition_catastrophe"  # or "one_fixed_one_changes_one_feature" or "strict_diff"
+    MODE = "strict_diff"  # or "one_fixed_one_changes_one_feature" or "strict_diff"
     plot_save_dir = "dataset_stats_plots"
 
     if MODE == "superposition_catastrophe":

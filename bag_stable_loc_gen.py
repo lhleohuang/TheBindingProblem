@@ -66,7 +66,7 @@ def all_ordered_pairs():
                     out.append((s1,c1,s2,c2))
     return out  # 25*16 = 400
 
-def make_dataset(root="bag_pairs_v1", identical_ratio=0.30, seed=42, r=25):
+def make_dataset(root="replace", identical_ratio=0.50, seed=42, r=25):
     random.seed(seed)
     root = Path(root)
     same_dir = root/"same"

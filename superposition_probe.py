@@ -128,17 +128,18 @@ def train_linear_probes(
 
     return probes, histories, test_results
 
-
-
 def load_pairs(path, device="cpu"):
     obj = torch.load(path, map_location="cpu")
     pairs  = [p.to(device) for p in obj["pairs"]]
     labels = [y.to(device) for y in obj["labels"]]
     return pairs, labels, obj.get("meta", {})
 
+
 layered_pairs, layered_labels, meta = load_pairs(saved_activations, device="cpu")
 
 probes, histories, test_results = train_linear_probes(layered_pairs, layered_labels)
+
+
 for i, hist in enumerate(histories):
     tr_loss, tr_acc, vl_loss, vl_acc = hist[-1]
     tl, ta = test_results[i]

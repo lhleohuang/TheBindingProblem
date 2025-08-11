@@ -6,13 +6,16 @@ from collections import Counter
 from PIL import Image
 import torchvision.transforms as T
 from torch.utils.data import Dataset, DataLoader
+import matplotlib.pyplot as plt
 
 from vit_prisma.models.model_loader import load_hooked_model
 from vit_prisma.utils import prisma_utils
 
-dataset_name = "bag_dataset_location_stable_0"
+MODE = 0 # 0 = No location swapping in SAME pairs, 1 = Swapping locations for SAME pairs
+
+dataset_name = f"bag_dataset_location_stable_{MODE}"
 DEVICE     = "cpu"
-out_path = "layered_pairs_labels_location_stable_0.pt"
+out_path = f"layered_pairs_labels_location_stable_{MODE}.pt"
 
 tfm = T.Compose([
     T.Resize((224, 224)),
@@ -89,10 +92,48 @@ class FlatImageDataset(Dataset):
             img = T.ToTensor()(img)
         return img, path
 
-def print_diff_pair_stats(dataset: FlatImageDataset):
-    color_counts = Counter()
-    shape_counts = Counter()
-    shape_color_counts = Counter()
+# Helper for plotting stats
+def _bar_triptych(cnt_shapes, cnt_colors, cnt_combo, title, save_dir=None):
+    def kv(cnt):
+        items = sorted(cnt.items(), key=lambda kv: (-kv[1], str(kv[0])))
+        x = [str(k) for k,_ in items]
+        y = [v for _,v in items]
+        return x, y
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4), constrained_layout=True)
+
+    xs, ys = kv(cnt_shapes)
+    axes[0].bar(range(len(xs)), ys)
+    axes[0].set_title("Shapes")
+    axes[0].set_xticks(range(len(xs)))
+    axes[0].set_xticklabels(xs, rotation=60, ha="right")
+
+    xc, yc = kv(cnt_colors)
+    axes[1].bar(range(len(xc)), yc)
+    axes[1].set_title("Colors")
+    axes[1].set_xticks(range(len(xc)))
+    axes[1].set_xticklabels(xc, rotation=60, ha="right")
+
+    xk, yk = kv(cnt_combo)
+    axes[2].bar(range(len(xk)), yk)
+    axes[2].set_title("Shape+Color")
+    axes[2].set_xticks(range(len(xk)))
+    axes[2].set_xticklabels(xk, rotation=60, ha="right")
+
+    fig.suptitle(title)
+    if save_dir:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        p = Path(save_dir) / f"{title.lower().replace(' ','_').replace('+','plus')}.png"
+        fig.savefig(p, dpi=200)
+    plt.show()
+
+def get_pair_stats(dataset: FlatImageDataset):
+    color_counts_diff = Counter()
+    shape_counts_diff = Counter()
+    shape_color_counts_diff = Counter()
+    color_counts_same = Counter()
+    shape_counts_same = Counter()
+    shape_color_counts_same = Counter()
 
     for idx0, idx1 in dataset.diff_pairs_idx:
         for idx in (idx0, idx1):
@@ -106,25 +147,60 @@ def print_diff_pair_stats(dataset: FlatImageDataset):
                 shape = meta["s2"]
                 color = meta["c2"]
 
-            color_counts[color] += 1
-            shape_counts[shape] += 1
-            shape_color_counts[(shape, color)] += 1
+            color_counts_diff[color] += 1
+            shape_counts_diff[shape] += 1
+            shape_color_counts_diff[(shape, color)] += 1
 
-    print(f"Colors (total={sum(color_counts.values())}, unique={len(color_counts)}):")
-    for color, count in sorted(color_counts.items()):
+    for idx0, idx1 in dataset.same_pairs_idx:
+        for idx in (idx0, idx1):
+            meta = dataset.meta_per_image[idx]
+            # figure out the object's shape/color for this image index
+            # 'which' tells us whether this is first or second object in the pair
+            if meta["which"] == 0:
+                shape = meta["s1"]
+                color = meta["c1"]
+            else:
+                shape = meta["s2"]
+                color = meta["c2"]
+
+            color_counts_same[color] += 1
+            shape_counts_same[shape] += 1
+            shape_color_counts_same[(shape, color)] += 1
+
+    print(f"SAME pairs stats:\n")
+    print(f"Colors (total={sum(color_counts_same.values())}, unique={len(color_counts_same)}):")
+    for color, count in sorted(color_counts_same.items()):
         print(f"  {color}: {count}")
 
-    print(f"\nShapes (total={sum(shape_counts.values())}, unique={len(shape_counts)}):")
-    for shape, count in sorted(shape_counts.items()):
+    print(f"\nShapes (total={sum(shape_counts_same.values())}, unique={len(shape_counts_same)}):")
+    for shape, count in sorted(shape_counts_same.items()):
         print(f"  {shape}: {count}")
 
-    print(f"\nShape+Color (total={sum(shape_color_counts.values())}, unique={len(shape_color_counts)}):")
-    for sc, count in sorted(shape_color_counts.items()):
+    print(f"\nShape+Color (total={sum(shape_color_counts_same.values())}, unique={len(shape_color_counts_same)}):")
+    for sc, count in sorted(shape_color_counts_same.items()):
         print(f"  {sc}: {count}")
 
+    print(f"\nDIFFERENT pairs stats:\n")
+    print(f"Colors (total={sum(color_counts_diff.values())}, unique={len(color_counts_diff)}):")
+    for color, count in sorted(color_counts_diff.items()):
+        print(f"  {color}: {count}")
+
+    print(f"\nShapes (total={sum(shape_counts_diff.values())}, unique={len(shape_counts_diff)}):")
+    for shape, count in sorted(shape_counts_diff.items()):
+        print(f"  {shape}: {count}")
+
+    print(f"\nShape+Color (total={sum(shape_color_counts_diff.values())}, unique={len(shape_color_counts_diff)}):")
+    for sc, count in sorted(shape_color_counts_diff.items()):
+        print(f"  {sc}: {count}")
+
+    _bar_triptych(shape_counts_same, color_counts_same, shape_color_counts_same,
+                  f"location_stable_{MODE}_same_stats", save_dir="dataset_stats_plots")
+    _bar_triptych(shape_counts_diff, color_counts_diff, shape_color_counts_diff,
+                  f"location_stable_{MODE}_diff_stats", save_dir="dataset_stats_plots")
+
 ds = FlatImageDataset(dataset_name, transform=tfm)
-print_diff_pair_stats(ds)
-loader = DataLoader(ds, batch_size=100000, shuffle=True, num_workers=0)
+get_pair_stats(ds)
+loader = DataLoader(ds, batch_size=100000, shuffle=True, num_workers=0) # include all images in one batch
 
 same_pairs_idx = ds.same_pairs_idx
 diff_pairs_idx = ds.diff_pairs_idx
