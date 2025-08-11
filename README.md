@@ -16,3 +16,5 @@ location_stable_cls_activations.py to generate and save that of the stable locat
 supreposition_probe.py will create a wandb project using your current account.    
 ### PCA experiments
 pca.ipynb     
+## Acknowledgements
+Project built on [vit-prisma](https://github.com/Prisma-Multimodal/ViT-Prisma), a slight adaptation of which is included in this repository.        
