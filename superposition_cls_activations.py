@@ -10,6 +10,8 @@ from torch.utils.data._utils.collate import default_collate
 from PIL import Image
 from vit_prisma.utils import prisma_utils
 from collections import Counter
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 model = load_hooked_model('facebook/dino-vitb16', center_writing_weights=True,
                                         fold_ln=True,
@@ -84,15 +86,16 @@ def get_loader(images_dir, batch_size=32, shuffle=False, num_workers=4, transfor
 loader = get_loader("bag_dataset", batch_size=100000) # entire dataset in one batch
 test_batch, test_labels = next(iter(loader))
 
+'''
+Standard operations using vit-prisma to fetch all activations of all images in the dataset.
+'''
+
 all_logits, all_cache = model.run_with_cache(test_batch)
 
 layered_activations = []
 
 for layer in range(model.cfg.n_layers):
     layered_activations.append(all_cache[prisma_utils.get_act_name("resid_mid", layer, None)])
-
-print(len(layered_activations))
-
 
 def construct_activation_pairs(layered_activations, test_labels):
     """
@@ -128,14 +131,9 @@ def construct_activation_pairs(layered_activations, test_labels):
         # different: need swapped assignment at idx=0
         swapped = (s1, c2, s2, c1)
         if 0 in idxs and swapped in assign_map and 0 in assign_map[swapped]:
-            diff_idx.append((idxs[0], assign_map[swapped][0]))
+            diff_idx.append((idxs[0], assign_map[swapped][0])) # use only the 0 indexed for the diff pair 
     
-    parsed = []
-    for lbl in test_labels:
-        (s1, c1), (s2, c2), idx_lbl = lbl
-        parsed.append({"objs": [(s1, c1), (s2, c2)], "idx": idx_lbl})
-
-    _print_diff_stats(diff_idx, parsed)
+    _print_stats(diff_idx, same_idx)
 
     # Step 4: Construct activation pair tensors
     layered_same = []
@@ -151,47 +149,6 @@ def construct_activation_pairs(layered_activations, test_labels):
         layered_diff.append(diff_pairs)     # [N_diff, 2, D]
     
     return layered_same, layered_diff, assign_map
-
-
-def combine_and_shuffle_pairs(layered_same, layered_diff, seed=None):
-    """
-    Combines same and diff pairs for each layer, labels them, and shuffles.
-
-    Args:
-        layered_same: list of L tensors, each [N_same, 2, D]
-        layered_diff: list of L tensors, each [N_diff, 2, D]
-        seed: optional int for reproducibility
-
-    Returns:
-        layered_pairs: list of L tensors, each [N_total, 2, D]
-        layered_labels: list of L tensors, each [N_total]
-    """
-    if seed is not None:
-        torch.manual_seed(seed)
-
-    layered_pairs = []
-    layered_labels = []
-    for same_pairs, diff_pairs in zip(layered_same, layered_diff):
-        # Create labels
-        n_same = same_pairs.size(0)
-        n_diff = diff_pairs.size(0)
-        labels_same = torch.zeros(n_same, dtype=torch.long)
-        labels_diff = torch.ones(n_diff, dtype=torch.long)
-
-        # Combine pairs and labels
-        pairs = torch.cat([same_pairs, diff_pairs], dim=0)  # [N_total, 2, D]
-        labels = torch.cat([labels_same, labels_diff], dim=0)  # [N_total]
-
-        # Shuffle
-        perm = torch.randperm(pairs.size(0))
-        pairs_shuffled = pairs[perm]
-        labels_shuffled = labels[perm]
-
-        layered_pairs.append(pairs_shuffled)
-        layered_labels.append(labels_shuffled)
-
-    return layered_pairs, layered_labels
-
 
 def construct_activation_pairs_strict_diff(layered_activations, test_labels, use_idx_for_diff=0, balance_to_same=True):
     """
@@ -218,7 +175,7 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
     shape2id = {s:i for i,s in enumerate(shapes_vocab)}
     color2id = {c:i for i,c in enumerate(colors_vocab)}
 
-    # 3) SAME pairs (reuse your previous mapping)
+    # 3) SAME pairs (same as before)
     assign_map = {}
     for img_idx, lbl in enumerate(test_labels):
         (s1, c1), (s2, c2), idx_lbl = lbl
@@ -232,9 +189,9 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
             same_idx.append((idxs[0], idxs[1]))
     
 
-    # 4) Build bitmasks for DIFF logic, but only for images with idx==use_idx_for_diff
-    #    (prevents pairing the same assignment twice)
+    # 4) Build bitmasks for DIFF logic
     #    Also keep one canonical index per unordered object set so we don't duplicate.
+    # i.e., only one of ((s1, c1), (s2, c2)) and ((s2, c2), (s1, c1)) will be kept.
     def unordered_key(obj_pair):
         # frozenset of the two (shape,color) tuples
         (s1, c1), (s2, c2) = obj_pair
@@ -247,6 +204,7 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
     
 
     for img_idx, ((s1, c1), (s2, c2), idx_lbl) in enumerate(img_objs):
+        # only for images with idx==use_idx_for_diff (we use the 0 index for idx_lbl)
         if idx_lbl != use_idx_for_diff:
             continue
         key_u = unordered_key(((s1, c1), (s2, c2)))
@@ -254,9 +212,11 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
         if key_u in canonical_img_for_pair:
             continue
         canonical_img_for_pair[key_u] = img_idx
-
-        sm = (1 << shape2id[s1]) | (1 << shape2id[s2])
-        cm = (1 << color2id[c1]) | (1 << color2id[c2])
+        # 1 << k means “take the binary number 1 and shift it left by k positions.”
+        # Hence 1 << shape2id[s1] is a bitmask where the bit corresponding to shape s1 is set.
+        # With '|', if either bit in either number is 1, the result’s bit is 1.
+        sm = (1 << shape2id[s1]) | (1 << shape2id[s2]) # shapes present in the image
+        cm = (1 << color2id[c1]) | (1 << color2id[c2]) # colors present in the image
         shape_masks.append(sm)
         color_masks.append(cm)
         canonical_indices.append(img_idx)
@@ -271,21 +231,17 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
     
     for i in range(M):
         for j in range(i+1, M):
+            # Use bit-wise and '&' == 0 means no overlaps at all
             if (shape_masks[i].item() & shape_masks[j].item()) == 0 and (color_masks[i].item() & color_masks[j].item()) == 0:
                 diff_idx.append((canonical_indices[i], canonical_indices[j]))
     
 
-    # Optionally balance DIFF count to SAME count
+    # Balance DIFF count to SAME count
     if balance_to_same and len(diff_idx) > len(same_idx):
         random.seed(42)  # set seed here if you want reproducibility
         diff_idx = random.sample(diff_idx, len(same_idx))
         
-    parsed = []
-    for lbl in test_labels:
-        (s1, c1), (s2, c2), idx_lbl = lbl
-        parsed.append({"objs": [(s1, c1), (s2, c2)], "idx": idx_lbl})
-
-    _print_diff_stats(diff_idx, parsed)
+    _print_stats(diff_idx, same_idx)
 
     # 6) Construct activation pair tensors
     layered_same = []
@@ -300,7 +256,6 @@ def construct_activation_pairs_strict_diff(layered_activations, test_labels, use
                                   for i, j in diff_idx]) if diff_idx else torch.empty(0, 2, cls_acts.size(-1))
         layered_same.append(same_pairs)
         layered_diff.append(diff_pairs)
-    
 
     # For debugging:
     print(f"#SAME pairs: {len(same_idx)}  |  #DIFF(strict) pairs: {len(diff_idx)}  | shapes={len(shapes_vocab)} colors={len(colors_vocab)}")
@@ -319,19 +274,7 @@ def construct_activation_pairs_one_fixed_one_changes_one_feature(
     # 1) CLS per layer
     layered_cls = [layer[:, 0, :] for layer in layered_activations]  # each [N, D]
 
-    # Helper: unordered key for a 2-object image (ignores order)
-    def unordered_key(pair):
-        (s1, c1), (s2, c2) = pair
-        return frozenset([(s1, c1), (s2, c2)])
-
-    # Parse labels in a convenient form
-    # Each item: { "objs": [(s1,c1), (s2,c2)], "idx": idx_label }
-    parsed = []
-    for lbl in test_labels:
-        (s1, c1), (s2, c2), idx_lbl = lbl
-        parsed.append({"objs": [(s1, c1), (s2, c2)], "idx": idx_lbl})
-
-    # 2) SAME pairs: reuse your (idx=0 vs idx=1) per ordered tuple
+    # 2) SAME pairs: reuse (idx=0 vs idx=1) per ordered tuple
     assign_map = {}
     for img_idx, lbl in enumerate(test_labels):
         (s1, c1), (s2, c2), idx_lbl = lbl
@@ -343,8 +286,21 @@ def construct_activation_pairs_one_fixed_one_changes_one_feature(
         if 0 in idxs and 1 in idxs:
             same_idx.append((idxs[0], idxs[1]))
 
-    # 3) Canonicalize images for DIFF construction (only idx==use_idx_for_diff,
+    # 3) Canonicalize images for DIFF construction (only idx==use_idx_for_diff (we use 0 index),
     #    and keep one representative per unordered set of objects)
+
+    # Helper: Parse labels in a convenient form
+    # Each item: { "objs": [(s1,c1), (s2,c2)], "idx": idx_label }
+    parsed = []
+    for lbl in test_labels:
+        (s1, c1), (s2, c2), idx_lbl = lbl
+        parsed.append({"objs": [(s1, c1), (s2, c2)], "idx": idx_lbl})
+
+    # Helper: unordered key for a 2-object image (ignores order)
+    def unordered_key(pair):
+        (s1, c1), (s2, c2) = pair
+        return frozenset([(s1, c1), (s2, c2)])
+
     canonical_for_unordered = {}
     canonical_indices = []
     for img_idx, rec in enumerate(parsed):
@@ -389,13 +345,15 @@ def construct_activation_pairs_one_fixed_one_changes_one_feature(
             if one_fixed_one_changes_one_feature(objsA, objsB):
                 diff_idx.append((ia, ib))
     # breakpoint()
-    # 6) Optionally balance DIFF count to SAME count
+
+    # 6) Balance DIFF count to SAME count
     if balance_to_same and len(diff_idx) > len(same_idx):
         random.seed(42)  # set seed here if you want reproducibility
         diff_idx = random.sample(diff_idx, len(same_idx))
     # if balance_to_same and len(diff_idx) > len(same_idx):
     #         diff_idx = diff_idx[:len(same_idx)]
-    _print_diff_stats(diff_idx, parsed)
+    
+    _print_stats(diff_idx, same_idx)
 
     # 7) Construct activation pair tensors
     layered_same = []
@@ -422,16 +380,66 @@ def construct_activation_pairs_one_fixed_one_changes_one_feature(
     # breakpoint()
     return layered_same, layered_diff, assign_map
 
-def _print_diff_stats(diff_idx, parsed):
-    c_shape = Counter()
-    c_color = Counter()
-    c_combo = Counter()
+# Helper for plotting stats
+def _bar_triptych(cnt_shapes, cnt_colors, cnt_combo, title, save_dir=None):
+    def kv(cnt):
+        items = sorted(cnt.items(), key=lambda kv: (-kv[1], str(kv[0])))
+        x = [str(k) for k,_ in items]
+        y = [v for _,v in items]
+        return x, y
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4), constrained_layout=True)
+
+    xs, ys = kv(cnt_shapes)
+    axes[0].bar(range(len(xs)), ys)
+    axes[0].set_title("Shapes")
+    axes[0].set_xticks(range(len(xs)))
+    axes[0].set_xticklabels(xs, rotation=60, ha="right")
+
+    xc, yc = kv(cnt_colors)
+    axes[1].bar(range(len(xc)), yc)
+    axes[1].set_title("Colors")
+    axes[1].set_xticks(range(len(xc)))
+    axes[1].set_xticklabels(xc, rotation=60, ha="right")
+
+    xk, yk = kv(cnt_combo)
+    axes[2].bar(range(len(xk)), yk)
+    axes[2].set_title("Shape+Color")
+    axes[2].set_xticks(range(len(xk)))
+    axes[2].set_xticklabels(xk, rotation=60, ha="right")
+
+    fig.suptitle(title)
+    if save_dir:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        p = Path(save_dir) / f"{title.lower().replace(' ','_').replace('+','plus')}.png"
+        fig.savefig(p, dpi=200)
+    plt.show()
+
+def _print_stats(diff_idx, same_idx):
+
+    parsed = []
+    for lbl in test_labels:
+        (s1, c1), (s2, c2), idx_lbl = lbl
+        parsed.append({"objs": [(s1, c1), (s2, c2)], "idx": idx_lbl})
+
+    c_shape_diff = Counter()
+    c_shape_same = Counter()
+    c_color_diff = Counter()
+    c_color_same = Counter()
+    c_combo_diff = Counter()
+    c_combo_same = Counter()
 
     for i, j in diff_idx:
         for s, c in (parsed[i]["objs"] + parsed[j]["objs"]):
-            c_shape[s] += 1
-            c_color[c] += 1
-            c_combo[(s, c)] += 1
+            c_shape_diff[s] += 1
+            c_color_diff[c] += 1
+            c_combo_diff[(s, c)] += 1
+
+    for i, j in same_idx:
+        for s, c in (parsed[i]["objs"] + parsed[j]["objs"]):
+            c_shape_same[s] += 1
+            c_color_same[c] += 1
+            c_combo_same[(s, c)] += 1
 
     def dump(title, cnt):
         total = sum(cnt.values())
@@ -439,10 +447,68 @@ def _print_diff_stats(diff_idx, parsed):
         for k, v in sorted(cnt.items(), key=lambda kv: (-kv[1], str(kv[0]))):
             print(f"  {k}: {v}")
 
-    print(f"\nDIFF stats over {len(diff_idx)} pairs:")
-    dump("Shapes", c_shape)
-    dump("Colors", c_color)
-    dump("Shape+Color", c_combo)
+    print(f"\n SAME Stats over {len(same_idx)} pairs:")
+    dump("Shapes", c_shape_same)
+    dump("Colors", c_color_same)
+    dump("Shape+Color", c_combo_same)
+
+    print(f"\n")
+
+    print(f"\n DIFF Stats over {len(diff_idx)} pairs:")
+    dump("Shapes", c_shape_diff)
+    dump("Colors", c_color_diff)
+    dump("Shape+Color", c_combo_diff)
+
+    print(f"Combined Stats over {len(same_idx) + len(diff_idx)} pairs:")
+    c_shape_combined = c_shape_same + c_shape_diff
+    c_color_combined = c_color_same + c_color_diff
+    c_combo_combined = c_combo_same + c_combo_diff
+    dump("Shapes", c_shape_combined)
+    dump("Colors", c_color_combined)
+    dump("Shape+Color", c_combo_combined)
+
+    _bar_triptych(c_shape_same, c_color_same, c_combo_same, f"{MODE} SAME Stats", plot_save_dir)
+    _bar_triptych(c_shape_diff, c_color_diff, c_combo_diff, f"{MODE} DIFF Stats", plot_save_dir)
+    _bar_triptych(c_shape_combined, c_color_combined, c_combo_combined, f"{MODE} COMBINED Stats", plot_save_dir)
+
+def combine_and_shuffle_pairs(layered_same, layered_diff, seed=None):
+    """
+    Combines same and diff pairs for each layer, labels them, and shuffles.
+
+    Args:
+        layered_same: list of L tensors, each [N_same, 2, D]
+        layered_diff: list of L tensors, each [N_diff, 2, D]
+        seed: optional int for reproducibility
+
+    Returns:
+        layered_pairs: list of L tensors, each [N_total, 2, D]
+        layered_labels: list of L tensors, each [N_total]
+    """
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    layered_pairs = []
+    layered_labels = []
+    for same_pairs, diff_pairs in zip(layered_same, layered_diff):
+        # Create labels
+        n_same = same_pairs.size(0)
+        n_diff = diff_pairs.size(0)
+        labels_same = torch.zeros(n_same, dtype=torch.long)
+        labels_diff = torch.ones(n_diff, dtype=torch.long)
+
+        # Combine pairs and labels
+        pairs = torch.cat([same_pairs, diff_pairs], dim=0)  # [N_total, 2, D]
+        labels = torch.cat([labels_same, labels_diff], dim=0)  # [N_total]
+
+        # Shuffle
+        perm = torch.randperm(pairs.size(0))
+        pairs_shuffled = pairs[perm]
+        labels_shuffled = labels[perm]
+
+        layered_pairs.append(pairs_shuffled)
+        layered_labels.append(labels_shuffled)
+
+    return layered_pairs, layered_labels
 
 def save_pairs(path, layered_pairs, layered_labels, meta=None, fp16=False):
     pairs_cpu  = [p.half().cpu() if fp16 else p.cpu() for p in layered_pairs]
@@ -456,12 +522,25 @@ def save_pairs(path, layered_pairs, layered_labels, meta=None, fp16=False):
     }
     torch.save(payload, path)
 
-# you may call construct_activation_pairs (for superposition catastrophe style datset) 
-# or construct_activation_pairs_one_fixed_one_changes_one_feature (for that baseline)
-# or construct_activation_pairs_strict_diff (for that baseline)
-layered_same, layered_diff, assign_map = construct_activation_pairs_strict_diff(layered_activations, test_labels)
 
-layered_pairs, layered_labels = combine_and_shuffle_pairs(layered_same, layered_diff, seed=42)
-meta = {"model":"facebook/dino-vitb16", "pair_build":"cls_sum", "seed":42}
-# change saved activations accordingly
-save_pairs("layered_pairs_labels_strict_diff.pt", layered_pairs, layered_labels, meta=meta, fp16=False)
+if __name__ == "__main__":
+    # you may call construct_activation_pairs (for superposition catastrophe style datset) 
+    # or construct_activation_pairs_one_fixed_one_changes_one_feature (for that baseline)
+    # or construct_activation_pairs_strict_diff (for that baseline)
+    MODE = "superposition_catastrophe"  # or "one_fixed_one_changes_one_feature" or "strict_diff"
+    plot_save_dir = "dataset_stats_plots"
+
+    if MODE == "superposition_catastrophe":
+        layered_same, layered_diff, assign_map = construct_activation_pairs(layered_activations, test_labels)
+    elif MODE == "one_fixed_one_changes_one_feature":
+        layered_same, layered_diff, assign_map = construct_activation_pairs_one_fixed_one_changes_one_feature(layered_activations, test_labels)
+    elif MODE == "strict_diff":
+        layered_same, layered_diff, assign_map = construct_activation_pairs_strict_diff(layered_activations, test_labels)
+    else:
+        raise ValueError(f"Unknown MODE: {MODE}")
+    
+    layered_pairs, layered_labels = combine_and_shuffle_pairs(layered_same, layered_diff, seed=42)
+    meta = {"model":"facebook/dino-vitb16", "pair_build":"cls_sum", "seed":42}
+
+    # change saved activations accordingly
+    save_pairs(f"layered_pairs_labels_{MODE}.pt", layered_pairs, layered_labels, meta=meta, fp16=False)
