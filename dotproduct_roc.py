@@ -55,7 +55,7 @@ plt.ylabel("ROC–AUC")
 plt.ylim(0.0, 1.0)
 plt.grid(True, linestyle="--", alpha=0.6)
 plt.legend(fontsize=8)
-out_path = "dotproduct_plots/all_files_roc_auc_per_layer.png"
+out_path = "dotproduct_no_training_plots/all_files_roc_auc_per_layer.png"
 plt.savefig(out_path, dpi=200)
 plt.close()
 

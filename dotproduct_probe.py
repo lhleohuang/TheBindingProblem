@@ -137,6 +137,7 @@ def train_and_plot_on_files(
     perfile_val_aucs = {}
     for fname in saved_activation_files:
         layered_pairs, layered_labels, _ = load_pairs(fname, device=device)
+        # breakpoint()
         models, logs = train_val_pairdot_per_layer(
             layered_pairs, layered_labels,
             proj_dim=proj_dim, l2_normalize=l2_normalize, temperature=temperature,

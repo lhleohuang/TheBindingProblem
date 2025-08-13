@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from vit_prisma.models.model_loader import load_hooked_model
 from vit_prisma.utils import prisma_utils
 
-MODE = 0 # 0 = No location swapping in SAME pairs, 1 = Swapping locations for SAME pairs
+MODE = 0 # 1 = No location swapping in SAME pairs, 0 = Swapping locations for SAME pairs
 
 dataset_name = f"bag_dataset_location_stable_{MODE}"
 DEVICE     = "cpu"
@@ -200,7 +200,7 @@ def get_pair_stats(dataset: FlatImageDataset):
 
 ds = FlatImageDataset(dataset_name, transform=tfm)
 get_pair_stats(ds)
-loader = DataLoader(ds, batch_size=100000, shuffle=True, num_workers=0) # include all images in one batch
+loader = DataLoader(ds, batch_size=100000, shuffle=False, num_workers=0) # include all images in one batch
 
 same_pairs_idx = ds.same_pairs_idx
 diff_pairs_idx = ds.diff_pairs_idx
@@ -254,6 +254,8 @@ def build_pairs_from_indices(layered_cls, same_pairs_idx, diff_pairs_idx):
     return layered_same, layered_diff
 
 layered_same, layered_diff = build_pairs_from_indices(layered_cls_list, same_pairs_idx, diff_pairs_idx)
+
+# breakpoint()
 
 # ----------------------------
 # Combine, shuffle, save
