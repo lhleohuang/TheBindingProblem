@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 BindingProblem.egg-info/PKG-INFO
 BindingProblem.egg-info/SOURCES.txt
