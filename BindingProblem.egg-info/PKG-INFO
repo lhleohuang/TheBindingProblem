@@ -41,6 +41,8 @@ All parameters are listed either at the top or bottom of each file with comments
 `location_stable_cls_activations.py` to generate and save that of the stable location baseline.     
 ### Training the Probe
 `supreposition_probe.py` will create a wandb project using your current account.    
+`dotproduct_probe.py` trains a CLIP style probe on pairs of CLS tokens projected to joint embedding space.     
+`dotproduct_roc.py` evaluates dot product of pairs directly without projection.    
 ### PCA experiments
 `pca.ipynb`     
 ## Acknowledgements

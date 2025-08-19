@@ -1,5 +1,8 @@
 bag_dataset
 bag_dataset_location_stable_0
 bag_dataset_location_stable_1
+binding
 dataset_stats_plots
+dot_product_probe_plots
+dotproduct_no_training_plots
 vit_prisma
